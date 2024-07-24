@@ -22,7 +22,6 @@ defmt-rtt = "0.4.0"
 portable-atomic = { version = "1.5", features = ["critical-section"] }
 static_cell = "2"
 embedded-io-async = "0.6.1"
-heapless = "0.8.0"
 
 [profile.release]
 lto = true

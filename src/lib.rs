@@ -3,16 +3,13 @@
 use cyw43::{Control, NetDriver};
 use cyw43_pio::PioSpi;
 use embassy_executor::Spawner;
-use embassy_net::{ConfigV6, Stack, StackResources};
-use embassy_net::{
-    Ipv4Address, Ipv4Cidr, Ipv6Address, Ipv6Cidr, StaticConfigV4,
-};
+use embassy_net::StaticConfigV4;
+use embassy_net::{Stack, StackResources, StaticConfigV6};
 use embassy_rp::bind_interrupts;
 use embassy_rp::gpio::Output;
 use embassy_rp::peripherals::{DMA_CH0, PIN_23, PIN_25, PIO0};
 use embassy_rp::pio::InterruptHandler;
 use embassy_time::Timer;
-use heapless::Vec;
 use static_cell::StaticCell;
 
 type Pwr = Output<'static, PIN_23>;
@@ -25,6 +22,14 @@ pub static RESOURCES: StaticCell<StackResources<2>> = StaticCell::new();
 bind_interrupts!(pub struct Irqs {
     PIO0_IRQ_0 => InterruptHandler<PIO0>;
 });
+
+#[derive(Clone, Default)]
+pub struct WifiConfiguration<'a> {
+    pub wifi_ssid: &'a str,
+    pub wifi_password: Option<&'a str>,
+    pub ipv4: Option<StaticConfigV4>,
+    pub ipv6: Option<StaticConfigV6>,
+}
 
 #[embassy_executor::task]
 async fn wifi_task(runner: cyw43::Runner<'static, Pwr, Spi>) -> ! {
@@ -40,11 +45,12 @@ pub async fn configure_network(
     spawner: &Spawner,
     pwr: Pwr,
     spi: Spi,
-    ssid: &str,
-    password: Option<&str>,
+    config: WifiConfiguration<'_>,
 ) -> (Control<'static>, &'static Stack<NetDriver<'static>>) {
-    let (net_dev, ctrl) = init_wifi(&spawner, pwr, spi, ssid, password).await;
-    let stack = init_ip(&spawner, net_dev).await;
+    let (net_dev, ctrl) =
+        init_wifi(&spawner, pwr, spi, config.wifi_ssid, config.wifi_password)
+            .await;
+    let stack = init_ip(&spawner, net_dev, config.ipv4, config.ipv6).await;
 
     while !stack.is_config_up() {
         Timer::after_millis(100).await;
@@ -100,35 +106,20 @@ async fn init_wifi(
 async fn init_ip(
     spawner: &Spawner,
     net_dev: NetDriver<'static>,
+    ipv4_config: Option<StaticConfigV4>,
+    ipv6_config: Option<StaticConfigV6>,
 ) -> &'static Stack<NetDriver<'static>> {
     /* init ip stack */
 
-    let ipv4_config = StaticConfigV4 {
-        address: Ipv4Cidr::new(Ipv4Address::new(192, 168, 1, 6), 24),
-        dns_servers: Vec::new(),
-        gateway: Some(Ipv4Address::new(192, 168, 1, 1)),
+    let config = {
+        if let Some(ipv4_config) = ipv4_config {
+            embassy_net::Config::ipv4_static(ipv4_config)
+        } else if let Some(ipv6_config) = ipv6_config {
+            embassy_net::Config::ipv6_static(ipv6_config)
+        } else {
+            todo!("handle cases when neither ipv4 nor ipv6 are provided");
+        }
     };
-
-    let mut dns_servers = Vec::<Ipv6Address, 3>::new();
-    dns_servers
-        .push(Ipv6Address::new(
-            0xfd00, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0001,
-        ))
-        .unwrap();
-
-    let ipv6_config = embassy_net::StaticConfigV6 {
-        address: Ipv6Cidr::new(
-            Ipv6Address::new(0xfd00, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0006),
-            64,
-        ),
-        gateway: Some(Ipv6Address::new(
-            0xfd00, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0001,
-        )),
-        dns_servers,
-    };
-
-    let mut config = embassy_net::Config::ipv4_static(ipv4_config);
-    config.ipv6 = ConfigV6::Static(ipv6_config);
 
     let seed = 0x0123_4567_89ab_cdef;
 

@@ -1117,7 +1117,6 @@ dependencies = [
  "embassy-sync 0.5.0",
  "embassy-time",
  "embedded-io-async",
- "heapless 0.8.0",
  "portable-atomic",
  "static_cell",
 ]
